@@ -1,0 +1,77 @@
+#!/bin/bash
+set -e
+
+chown_proxy() {
+  if [ -e $1 ]; then
+  echo "$1 set to proxy:proxy"
+    chown -R proxy:proxy $1
+  else
+    echo "$1 doesn't exist"
+  fi
+}
+
+archive_file() {
+  if [ -e $1 ]; then
+    mv $1 $1.old
+  fi
+}
+
+if [  "${UPDATE_BLACKLIST_URL}" != "" ]; then
+	sudo wget -O backlist.tar.gz ${UPDATE_BLACKLIST_URL} \
+ 		&& tar -xzf backlist.tar.gz -C /var/lib/squidguard/db \
+ 		&& rm backlist.tar.gz \
+ 		&& chown proxy:proxy /var/lib/squidguard/db -R
+fi
+
+
+if [ ! -f /etc/squidguard/squidGuard.conf ]; then
+	# if this file doesn't exist -> it is the first time
+	if [  "${SQUID_UID}" != "" ]; then
+		# workaround for mac os mapping problem:
+		sudo usermod -u ${SQUID_UID} proxy
+	fi
+	# chown is required especially because directories can be mapped
+	chown_proxy /var/lib/squidguard/db 
+	chown_proxy /sample-config-simple 
+	chown_proxy /sample-config-blacklist 
+	chown_proxy /custom-config 
+	chown_proxy /var/log/squid
+
+	if [  "${SQUID_CONFIG_SOURCE}" != "" ]; then
+		echo "no configuration found -> use ${SQUID_CONFIG_SOURCE}/squidGuard.conf"		
+		ln -s ${SQUID_CONFIG_SOURCE}/squidGuard.conf /etc/squidguard/squidGuard.conf
+	elif [  "${UPDATE_BLACKLIST_URL}" != "" ]; then
+	    echo "no configuration found -> use /sample-config-blacklist"
+		ln -s /sample-config-blacklist/squidGuard.conf /etc/squidguard/squidGuard.conf
+	else
+	    echo "no configuration found -> use /sample-config-simple"
+		ln -s /sample-config-simple/squidGuard.conf /etc/squidguard/squidGuard.conf
+	fi
+fi
+
+echo "running startSquidGuard with WPAD_IP=${WPAD_IP} WPAD_NOPROXY_NET=${WPAD_NOPROXY_NET} WPAD_NOPROXY_MASK=${WPAD_NOPROXY_MASK}"
+
+if [  "${SQUID_CONFIG_SOURCE}" != "" ]; then
+	if [ -f ${SQUID_CONFIG_SOURCE}/wpad.dat ]; then
+		cp ${SQUID_CONFIG_SOURCE}/wpad.dat /var/www/html/
+	else
+		echo "wpad file ${SQUID_CONFIG_SOURCE}/wpad.dat does not exist. Use existing file."
+	fi
+	if [ -f ${SQUID_CONFIG_SOURCE}/block.html ]; then
+		cp ${SQUID_CONFIG_SOURCE}/block.html /var/www/html/
+	else
+		echo "wpad file ${SQUID_CONFIG_SOURCE}/wpad.dat does not exist. Use existing file."
+	fi
+fi
+
+if [  "${WPAD_IP}" != "" ]; then
+	sed 's/{{WPAD_IP}}/'"${WPAD_IP}"'/' -i /var/www/html/wpad.dat
+	sed 's/{{WPAD_NOPROXY_NET}}/'"${WPAD_NOPROXY_NET}"'/' -i /var/www/html/wpad.dat
+	sed 's/{{WPAD_NOPROXY_MASK}}/'"${WPAD_NOPROXY_MASK}"'/' -i /var/www/html/wpad.dat
+fi
+
+# start apache to serve wpad.dat file and or block.html
+sudo /etc/init.d/apache2 restart
+
+# run original squid start script
+exec /sbin/entrypoint.sh
